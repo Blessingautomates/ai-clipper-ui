@@ -10,7 +10,13 @@ export async function POST(request) {
       body: JSON.stringify(body),
     });
 
-    return NextResponse.json({ success: true, status: n8nResponse.status });
+    const responseData = await n8nResponse.text();
+
+    if (!n8nResponse.ok) {
+      return NextResponse.json({ success: false, error: `n8n Error (${n8nResponse.status}): ${responseData}` }, { status: n8nResponse.status });
+    }
+
+    return NextResponse.json({ success: true, data: responseData });
   } catch (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
