@@ -1,76 +1,56 @@
-'use client';
-
-import { useState } from 'react';
+"use client";
+import { useState } from "react";
 
 export default function Home() {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [clips, setClips] = useState([]);
-  const [error, setError] = useState('');
+  const [message, setMessage] = useState("");
 
-  const handleGenerate = async () => {
-    if (!url) return;
-
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     setLoading(true);
-    setError('');
-    setClips([]);
+    setMessage("");
 
     try {
-      const res = await fetch('https://nextgenzauto.app.n8n.cloud/webhook/clipper-trigger', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      // REPLACE THE URL BELOW WITH YOUR N8N PRODUCTION WEBHOOK URL
+      const response = await fetch("https://nextgenzauto.app.n8n.cloud/webhook-test/generate-clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoUrl: url }),
       });
 
-      if (!res.ok) throw new Error('Failed to generate clips from workflow');
+      if (!response.ok) throw new Error("Failed to connect to n8n workflow");
 
-      const data = await res.json();
-      setClips(data.clips || []);
+      const data = await response.json();
+      setMessage("Workflow triggered successfully!");
     } catch (err) {
-      console.error(err);
-      setError('Could not connect to n8n webhook. Make sure Cloudflare Tunnel and server.js are active.');
+      setMessage("Could not connect to n8n webhook. Make sure your workflow is active.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', color: '#f8fafc', padding: '2rem 1rem', fontFamily: 'sans-serif' }}>
-      <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-        <h1 style={{ textAlign: 'center', color: '#38bdf8' }}>ToolStack Clipper</h1>
-        
-        <div style={{ backgroundColor: '#1e293b', padding: '1.5rem', borderRadius: '12px', marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <input
-            type="url"
-            placeholder="Paste YouTube video link..."
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            style={{ padding: '0.8rem', borderRadius: '8px', border: '1px solid #334155', backgroundColor: '#0f172a', color: '#fff' }}
-          />
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={loading}
-            style={{ padding: '0.9rem', backgroundColor: loading ? '#64748b' : '#0284c7', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
-          >
-            {loading ? 'Analyzing & Clipping Video...' : 'Generate Viral Clips'}
-          </button>
-        </div>
-
-        {error && <p style={{ color: '#fca5a5', marginTop: '1rem' }}>{error}</p>}
-
-        {clips.length > 0 && (
-          <div style={{ marginTop: '2rem' }}>
-            <h2>Extracted Clips</h2>
-            {clips.map((clip, i) => (
-              <div key={i} style={{ backgroundColor: '#1e293b', padding: '1rem', borderRadius: '8px', marginBottom: '1rem' }}>
-                <h3 style={{ color: '#38bdf8', margin: 0 }}>{clip.headline || 'Clip'}</h3>
-                <p style={{ margin: 0, color: '#94a3b8' }}>Score: {clip.score}/100</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <main style={{ minHeight: "100vh", backgroundColor: "#0f172a", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+      <h1 style={{ fontSize: "1.2rem", color: "#38bdf8", marginBottom: "20px" }}>ToolStack Clipper</h1>
+      <form onSubmit={handleSubmit} style={{ width: "100%", maxWidth: "400px", display: "flex", flexDirection: "column", gap: "10px" }}>
+        <input
+          type="text"
+          placeholder="Paste YouTube URL..."
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          required
+          style={{ padding: "12px", borderRadius: "6px", border: "1px solid #334155", backgroundColor: "#1e293b", color: "#fff" }}
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          style={{ padding: "12px", borderRadius: "6px", backgroundColor: "#0284c7", color: "#fff", fontWeight: "bold", border: "none", cursor: "pointer" }}
+        >
+          {loading ? "Processing..." : "Generate Viral Clips"}
+        </button>
+      </form>
+      {message && <p style={{ marginTop: "15px", fontSize: "0.85rem", color: "#f87171" }}>{message}</p>}
+    </main>
   );
 }
