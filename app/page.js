@@ -12,19 +12,21 @@ export default function Home() {
     setMessage("");
 
     try {
-      // REPLACE THE URL BELOW WITH YOUR N8N PRODUCTION WEBHOOK URL
-      const response = await fetch("https://nextgenzauto.app.n8n.cloud/webhook-test/generate-clips", {
+      const response = await fetch("/api/webhook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoUrl: url }),
       });
 
-      if (!response.ok) throw new Error("Failed to connect to n8n workflow");
-
       const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Server responded with status ${response.status}`);
+      }
+
       setMessage("Workflow triggered successfully!");
     } catch (err) {
-      setMessage("Could not connect to n8n webhook. Make sure your workflow is active.");
+      setMessage(`Error: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -50,7 +52,11 @@ export default function Home() {
           {loading ? "Processing..." : "Generate Viral Clips"}
         </button>
       </form>
-      {message && <p style={{ marginTop: "15px", fontSize: "0.85rem", color: "#f87171" }}>{message}</p>}
+      {message && (
+        <p style={{ marginTop: "15px", fontSize: "0.85rem", color: message.startsWith("Error:") ? "#f87171" : "#4ade80" }}>
+          {message}
+        </p>
+      )}
     </main>
   );
 }
