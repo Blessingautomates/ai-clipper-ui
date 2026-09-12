@@ -10,13 +10,23 @@ export async function POST(request) {
       body: JSON.stringify(body),
     });
 
-    const responseData = await n8nResponse.text();
+    const responseText = await n8nResponse.text();
 
     if (!n8nResponse.ok) {
-      return NextResponse.json({ success: false, error: `n8n Error (${n8nResponse.status}): ${responseData}` }, { status: n8nResponse.status });
+      return NextResponse.json(
+        { success: false, error: `n8n Error (${n8nResponse.status}): ${responseText}` },
+        { status: n8nResponse.status }
+      );
     }
 
-    return NextResponse.json({ success: true, data: responseData });
+    let parsedData;
+    try {
+      parsedData = JSON.parse(responseText);
+    } catch {
+      parsedData = responseText;
+    }
+
+    return NextResponse.json({ success: true, data: parsedData });
   } catch (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
