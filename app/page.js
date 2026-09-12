@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles, Youtube, Video, Download, RefreshCw, CheckCircle, AlertCircle, Layers } from "lucide-react";
+import { Sparkles, Video, Download, RefreshCw, CheckCircle, AlertCircle, Layers, Play } from "lucide-react";
 
 export default function Home() {
   const [videoUrl, setVideoUrl] = useState("");
@@ -74,7 +74,7 @@ export default function Home() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                <Youtube className="w-4 h-4 text-red-500" /> YouTube Video Link
+                <Play className="w-4 h-4 text-red-500 fill-red-500" /> YouTube Video Link
               </label>
               <input
                 type="url"
