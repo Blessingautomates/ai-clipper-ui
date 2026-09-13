@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req) {
   try {
     const body = await req.json();
@@ -7,18 +9,17 @@ export async function POST(req) {
 
     const apiKey = process.env.AGENTROUTER_API_KEY;
     const baseUrl = process.env.AGENTROUTER_BASE_URL || "https://agentrouter.org/v1";
-    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+    const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL || "https://nextgenzauto.app.n8n.cloud/webhook/generate-clips";
 
-    // 1. Analyze Transcript using DeepSeek-V4-flash via AgentRouter
     let analyzedClips = [];
-    
-    if (transcript) {
+
+    if (transcript && apiKey) {
       const prompt = `
 You are a viral video strategist. Analyze this transcript with timestamps:
 "${transcript}"
 
-Extract 2-3 viral short-form video clips (30-60 seconds long).
-Return ONLY a raw JSON array matching this exact schema, without markdown codeblocks:
+Extract 2 or more viral short-form video clips (30-60 seconds long).
+Return ONLY a raw JSON array matching this exact schema:
 [
   {
     "title": "Catchy Title",
@@ -43,16 +44,14 @@ Return ONLY a raw JSON array matching this exact schema, without markdown codebl
         })
       });
 
-      if (!aiResponse.ok) {
-        throw new Error(`AgentRouter API Error: ${aiResponse.statusText}`);
+      if (aiResponse.ok) {
+        const aiData = await aiResponse.json();
+        const rawText = aiData.choices?.[0]?.message?.content || "[]";
+        const cleanJson = rawText.replace(/```json|```/g, "").trim();
+        analyzedClips = JSON.parse(cleanJson);
       }
-
-      const aiData = await aiResponse.json();
-      const rawText = aiData.choices[0].message.content.trim();
-      analyzedClips = JSON.parse(rawText.replace(/```json|```/g, ""));
     }
 
-    // 2. Pass video source & analyzed clips to n8n webhook for media processing
     const n8nResponse = await fetch(n8nWebhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -65,16 +64,11 @@ Return ONLY a raw JSON array matching this exact schema, without markdown codebl
       })
     });
 
-    if (!n8nResponse.ok) {
-      throw new Error(`n8n Webhook Error: Status ${n8nResponse.status}`);
-    }
-
-    const result = await n8nResponse.json();
-    return NextResponse.json({ success: true, data: result });
+    return NextResponse.json({ success: true, status: n8nResponse.status });
 
   } catch (error) {
     return NextResponse.json(
-      { error: error.message || "Failed to process video pipeline." },
+      { error: error.message || "Failed to process request" },
       { status: 500 }
     );
   }
