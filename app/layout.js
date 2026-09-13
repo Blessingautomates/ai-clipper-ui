@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "ToolStack Clipper - Turn YouTube Videos into Viral Shorts",
-  description: "Automated AI clipping engine to turn long-form videos into high-engagement short videos.",
+  title: "ToolStack AI",
+  description: "AI Video Workspace",
 };
 
 export default function RootLayout({ children }) {
