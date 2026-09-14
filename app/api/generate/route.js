@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabaseClient';
 
 export async function POST(request) {
   try {
-    const { videoUrl } = await request.json();
+    const { videoUrl, userId } = await request.json();
 
-    // Validates that a string was provided and starts with http:// or https://
     if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.match(/^https?:\/\/.+/i)) {
       return NextResponse.json(
         { error: 'Please provide a valid video URL (e.g. https://...)' },
@@ -12,28 +12,36 @@ export async function POST(request) {
       );
     }
 
-    // WEBHOOK_URL points to your n8n or backend processing engine
-    const webhookUrl = process.env.CLIPPER_BACKEND_WEBHOOK_URL;
+    // Insert new job record into Supabase clip_jobs table
+    const { data, error } = await supabase
+      .from('clip_jobs')
+      .insert([
+        {
+          user_id: userId || null,
+          video_url: videoUrl.trim(),
+          status: 'pending',
+          clips: [],
+        },
+      ])
+      .select()
+      .single();
 
-    if (webhookUrl) {
-      await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          videoUrl: videoUrl.trim(), 
-          timestamp: new Date().toISOString() 
-        }),
-      });
+    if (error) {
+      console.error('Database insertion error:', error);
+      return NextResponse.json(
+        { error: 'Failed to create video processing job' },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Video URL received and queued for processing',
-      jobId: `job_${Date.now()}`,
+      message: 'Video job queued successfully',
+      job: data,
     });
   } catch (error) {
     return NextResponse.json(
-      { error: 'Failed to process video URL' },
+      { error: 'Server error processing request' },
       { status: 500 }
     );
   }
