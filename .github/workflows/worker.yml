@@ -3,7 +3,7 @@ name: ToolStack Video Worker
 on:
   schedule:
     - cron: '*/5 * * * *'  # Runs automatically every 5 minutes
-  workflow_dispatch:        # Allows manual run from the GitHub UI anytime
+  workflow_dispatch:      # Allows manual run from the GitHub UI anytime
 
 jobs:
   process-video-jobs:
@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
