@@ -2,8 +2,8 @@ name: ToolStack Video Worker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Runs automatically every 5 minutes
-  workflow_dispatch:      # Allows manual run from the GitHub UI anytime
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   process-video-jobs:
@@ -30,4 +30,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AGENTROUTER_API_KEY: ${{ secrets.AGENTROUTER_API_KEY }}
         run: python worker.py
