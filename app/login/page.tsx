@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
@@ -11,9 +13,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const supabase = createClient();
 
   const handleGoogleLogin = async () => {
+    const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -69,7 +71,6 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Google OAuth Button */}
         <button
           onClick={handleGoogleLogin}
           type="button"
@@ -103,7 +104,6 @@ export default function LoginPage() {
           </span>
         </div>
 
-        {/* Email & Password Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">
