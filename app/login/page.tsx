@@ -1,7 +1,5 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
@@ -14,11 +12,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  
+
   const router = useRouter();
-  const supabase = createClient();
 
   const handleGoogleLogin = async () => {
+    const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -33,6 +31,8 @@ export default function LoginPage() {
     setError(null);
     setMessage(null);
 
+    const supabase = createClient();
+
     try {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({
@@ -43,7 +43,7 @@ export default function LoginPage() {
           },
         });
         if (error) throw error;
-        setMessage('Check your email address to confirm your account creation.');
+        setMessage('Confirmation email sent! Please check your inbox.');
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
