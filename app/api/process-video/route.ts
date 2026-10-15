@@ -8,11 +8,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Video URL is required' }, { status: 400 });
     }
 
+    // Analysis provider: any OpenAI-compatible endpoint, or AgentRouter by
+    // default. Mirrors make_llm_client() in worker.py so the deployed route and
+    // the worker never disagree about which provider is configured.
+    const llmBase = process.env.LLM_BASE_URL;
+    const llmKey = process.env.LLM_API_KEY;
+    const useGenericProvider = Boolean(llmBase || llmKey);
     const agentRouterKey = process.env.AGENTROUTER_API_KEY;
+    const apiKey = useGenericProvider ? llmKey : agentRouterKey;
 
-    if (!agentRouterKey) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'AGENTROUTER_API_KEY is missing in Vercel environment variables.' },
+        {
+          error: useGenericProvider
+            ? 'LLM_API_KEY is missing in Vercel environment variables.'
+            : 'AGENTROUTER_API_KEY is missing in Vercel environment variables.',
+        },
         { status: 500 }
       );
     }
@@ -63,14 +74,32 @@ Analyze the following content and extract all viral clips:
 ${chatLog ? `- Stream Chat Log Data: ${JSON.stringify(chatLog)}` : ''}
 `;
 
-    const response = await fetch('https://agentrouter.ai/v1/chat/completions', {
+    // agentrouter.ORG, not .ai: .ai is a different host that does not serve
+    // this API. Kept in sync with AGENTROUTER_BASE_URL in worker.py/.env.local.
+    const agentRouterBase =
+      process.env.AGENTROUTER_BASE_URL || 'https://agentrouter.org/v1';
+
+    const endpoint = useGenericProvider
+      ? `${llmBase}/chat/completions`
+      : `${agentRouterBase}/chat/completions`;
+
+    // The AgentRouter headers are provider-specific: they are required by
+    // AgentRouter and meaningless (occasionally harmful) elsewhere, so they are
+    // only sent when AgentRouter is the provider in use.
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    if (!useGenericProvider) {
+      headers['User-Agent'] = 'claude-code/0.2.29';
+      headers['Originator'] = 'claude-code';
+    }
+
+    const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${agentRouterKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
-        model: 'deepseek-v4-flash',
+        model: process.env.LLM_MODEL || 'deepseek-v4-flash',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userContent },

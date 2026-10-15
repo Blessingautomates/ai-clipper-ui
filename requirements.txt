@@ -1,0 +1,24 @@
+# ToolStack Clipper worker dependencies (worker.py, transcript.py).
+#
+# Installed by .github/workflows/worker.yml. Previously these were listed
+# unpinned inline in the workflow YAML, so CI and local runs could silently
+# diverge.
+#
+# Lower bounds only for now: pin exact versions (pip freeze) once a green CI run
+# has confirmed the set that actually resolves.
+#
+# youtube-transcript-api is pinned exactly, because transcript.py was written
+# against an INSPECTED build rather than a guessed API. Verified against 1.2.4:
+#   - YouTubeTranscriptApi exposes only `fetch` and `list` (no `get_transcript`),
+#     so transcript.py's 0.6.x fallback branch is dead code that safely no-ops.
+#   - `fetch(video_id, languages=...)` returns a FetchedTranscript that is
+#     ITERABLE but has no `.snippets` attribute; transcript.py reads it through
+#     `getattr(fetched, "snippets", fetched)` so it works either way.
+#   - Snippets are FetchedTranscriptSnippet dataclasses with fields
+#     (text, start, duration) -- no `end`, which is why the normaliser derives
+#     `end = start + duration`.
+
+yt-dlp>=2024.8.6
+openai>=1.40.0
+supabase>=2.7.0
+youtube-transcript-api==1.2.4

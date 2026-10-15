@@ -4,11 +4,25 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+    inputs:
+      max_jobs:
+        description: 'Max jobs to process this run'
+        required: false
+        default: '5'
+
+# Never let two runs race for the same queue row. The claim_job() RPC is
+# atomic anyway, but serialising keeps the reaper from fighting live runs.
+concurrency:
+  group: clipper-worker
+  cancel-in-progress: false
 
 jobs:
   process-video-jobs:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 55 min: under the 60-min hosted ceiling, and enough for a 1-2 h video
+    # end-to-end (download + transcribe + analyse). The worker also stops
+    # itself at RUN_BUDGET_SECONDS so it exits between jobs, not mid-job.
+    timeout-minutes: 55
 
     steps:
       - name: Checkout repository
@@ -17,13 +31,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install FFmpeg & Python Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-          pip install supabase yt-dlp openai
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Execute Python Worker
         env:
@@ -31,4 +48,13 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AGENTROUTER_API_KEY: ${{ secrets.AGENTROUTER_API_KEY }}
-        run: python worker.py
+          AGENTROUTER_BASE_URL: ${{ secrets.AGENTROUTER_BASE_URL || 'https://agentrouter.org/v1' }}
+          # Optional: set these repo secrets to run analysis on a different
+          # OpenAI-compatible provider instead of AgentRouter.
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: |
+          python worker.py \
+            --max-jobs "${{ github.event.inputs.max_jobs || 5 }}" \
+            --budget-minutes 50

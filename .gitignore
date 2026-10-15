@@ -32,6 +32,14 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the documented template must ship: `.env*` above would otherwise
+# silently swallow it, so the file would exist locally and never reach the repo.
+!.env.example
+
+# python (worker.py / transcript.py)
+__pycache__/
+*.py[cod]
+.venv/
 
 # vercel
 .vercel
