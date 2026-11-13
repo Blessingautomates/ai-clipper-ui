@@ -16,20 +16,24 @@ concurrency:
   group: clipper-worker
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   process-video-jobs:
     runs-on: ubuntu-latest
-    # 55 min: under the 60-min hosted ceiling, and enough for a 1-2 h video
-    # end-to-end (download + transcribe + analyse). The worker also stops
-    # itself at RUN_BUDGET_SECONDS so it exits between jobs, not mid-job.
-    timeout-minutes: 55
+    # 50-minute run budget, 20-minute per-job deadline, 30-minute stale lease.
+    # Allow up to ten minutes for setup and five minutes for worker shutdown.
+    # Hosted jobs allow up to six
+    # hours, but small bounded runs are appropriate for this CPU-only MVP.
+    timeout-minutes: 65
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -54,7 +58,9 @@ jobs:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          CLIPS_STORAGE_BUCKET: ${{ vars.CLIPS_STORAGE_BUCKET || 'clips' }}
+          MAX_JOBS: ${{ inputs.max_jobs || '5' }}
         run: |
           python worker.py \
-            --max-jobs "${{ github.event.inputs.max_jobs || 5 }}" \
+            --max-jobs "$MAX_JOBS" \
             --budget-minutes 50

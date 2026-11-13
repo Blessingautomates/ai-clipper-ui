@@ -20,5 +20,5 @@
 
 yt-dlp>=2024.8.6
 openai>=1.40.0
-supabase>=2.7.0
+supabase==2.34.1
 youtube-transcript-api==1.2.4

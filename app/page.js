@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Sparkles, Video, ArrowRight } from "lucide-react";
+import { Sparkles, ArrowRight } from "lucide-react";
 
 export default function HomePage() {
   return (

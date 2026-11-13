@@ -370,11 +370,19 @@ def _whisper_segments(openai_client: Any, audio_path: str) -> list[dict]:
     return segments
 
 
-def _from_whisper(url: str, workdir: str, openai_client: Any) -> list[dict]:
+def _from_whisper(url: str, workdir: str, openai_client: Any, source_path: str | None = None) -> list[dict]:
     if openai_client is None:
         raise TranscriptUnavailable("no OpenAI client available for Whisper fallback")
 
-    audio_path = _download_audio(url, workdir)
+    if source_path:
+        audio_path = os.path.join(workdir, "audio.mp3")
+        rendered = _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-protocol_whitelist", "file,pipe",
+                         "-i", source_path, "-vn", "-ac", "1", "-ar", str(AUDIO_SAMPLE_RATE),
+                         "-b:a", AUDIO_BITRATE, audio_path])
+        if rendered.returncode:
+            raise TranscriptUnavailable("Source video has no transcribable audio")
+    else:
+        audio_path = _download_audio(url, workdir)
     segments: list[dict] = []
     for chunk_path, offset in _split_audio(audio_path, workdir):
         for seg in _whisper_segments(openai_client, chunk_path):
@@ -413,6 +421,7 @@ def get_transcript(
     openai_client: Any = None,
     workdir: str | None = None,
     languages: Sequence[str] = DEFAULT_LANGUAGES,
+    source_path: str | None = None,
 ) -> dict:
     """Return {source, language, duration, segments, text} for `url`.
 
@@ -449,7 +458,7 @@ def get_transcript(
     owns_workdir = workdir is None
     workdir = workdir or tempfile.mkdtemp(prefix="clipper-transcript-")
     try:
-        segments = _from_whisper(url, workdir, openai_client)
+        segments = _from_whisper(url, workdir, openai_client, source_path)
     except Exception as exc:  # noqa: BLE001 - reported below with caption context
         message = f"whisper fallback failed: {exc}"
         if caption_error:
