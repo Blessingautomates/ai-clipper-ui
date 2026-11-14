@@ -29,7 +29,12 @@ import os
 import re
 import sys
 import time
+import tempfile
+from pathlib import Path
 from typing import Any, Sequence
+from uuid import UUID
+
+import media
 
 import transcript as transcript_mod
 from transcript import TranscriptUnavailable, format_timestamp
@@ -85,8 +90,7 @@ MAX_TRANSCRIPT_TOKENS = 60_000
 SYSTEM_PROMPT = """You are an elite short-form video viral strategist and lead video editor.
 You analyse a timestamped transcript and extract every highly engaging short-form clip (TikTok, YouTube Shorts, Instagram Reels).
 
-CRITICAL INSTRUCTION - DYNAMIC CLIP COUNT:
-Do NOT limit output to 3 clips. Extract ALL valid viral moments the content justifies (1 to 15+). A 2-hour podcast with 10 great moments yields 10 clips; a 5-minute video with 2 strong moments yields 2.
+Return up to THREE of the strongest self-contained clips, at most 90 seconds each.
 
 CRITICAL INSTRUCTION - TIMESTAMPS:
 Every transcript line is prefixed with its real time range, like:
@@ -737,7 +741,7 @@ def reap_stale_jobs(
     stale_minutes: int = STALE_AFTER_MINUTES,
     max_attempts: int = MAX_ATTEMPTS,
 ) -> int | None:
-    """Reset jobs orphaned by a killed runner. Non-fatal if the RPC is absent."""
+    """Reset orphaned jobs; fail the run if the queue contract is unavailable."""
     try:
         result = supabase.rpc("reap_stale_jobs", {
             "stale_after": f"{stale_minutes} minutes",
@@ -745,9 +749,7 @@ def reap_stale_jobs(
         }).execute()
         return result.data
     except Exception as exc:  # noqa: BLE001
-        print(f"[reaper] skipped ({exc})")
-        print("[reaper] apply migrations/001_clip_jobs.sql in Supabase to enable this")
-        return None
+        raise RuntimeError("Queue recovery RPC unavailable; check the approved queue setup") from exc
 
 
 def claim_job(supabase: Any) -> dict | None:
@@ -755,9 +757,7 @@ def claim_job(supabase: Any) -> dict | None:
     try:
         data = supabase.rpc("claim_job").execute().data
     except Exception as exc:  # noqa: BLE001
-        print(f"[claim] claim_job() unavailable: {exc}")
-        print("[claim] apply migrations/001_clip_jobs.sql in Supabase, then retry")
-        return None
+        raise RuntimeError("Queue claim RPC unavailable; check the approved queue setup") from exc
 
     # `returns setof` would give a list; `returns clip_jobs` gives a dict.
     if isinstance(data, list):
@@ -769,47 +769,111 @@ def process_video_job(supabase: Any, job: dict, openai_client: Any = None) -> li
     """Run one claimed job. Returns the clips on success, else None."""
     job_id = job.get("id")
     url = job.get("video_url")
-    if not job_id or not url:
-        print(f"[job] malformed row, skipping: {job!r}")
+    attempt = job.get("attempts")
+    owner = job.get("user_id")
+    try:
+        UUID(str(job_id))
+        UUID(str(owner))
+    except ValueError:
+        print("[job] missing or invalid job owner/id; skipping")
+        return None
+    if not url or not isinstance(attempt, int) or attempt < 1:
+        print("[job] malformed queue row; skipping")
         return None
 
-    print(f"[job {job_id}] processing {url}")
+    print(f"[job {job_id}] processing attempt {attempt}")
     started = time.monotonic()
+    uploaded = []
+    bucket_name = os.environ.get("CLIPS_STORAGE_BUCKET") or "clips"
 
     try:
-        result = transcript_mod.get_transcript(url, openai_client=openai_client)
-        segments = result["segments"]
-        duration = result.get("duration")
-        print(
-            f"[job {job_id}] transcript via {result['source']}: "
-            f"{len(segments)} segments, duration={duration}"
-        )
+        with media.job_deadline(), tempfile.TemporaryDirectory(prefix="clipper-job-") as directory:
+            bucket = supabase.storage.get_bucket(bucket_name)
+            is_public = bucket.get("public") if isinstance(bucket, dict) else getattr(bucket, "public", None)
+            if is_public is not False:
+                raise RuntimeError("Clip storage bucket is missing or is not private")
+            rendered, transcript_source = build_video(url, Path(directory), openai_client)
+            clips = []
+            for path, metadata in rendered:
+                object_path = f"{owner}/{job_id}/attempt-{attempt}/clip-{metadata['clip_number']}.mp4"
+                # Include the path before upload: a lost response may still have stored it.
+                uploaded.append(object_path)
+                with path.open("rb") as handle:
+                    supabase.storage.from_(bucket_name).upload(object_path, handle, {
+                        "content-type": "video/mp4", "upsert": "false", "cache-control": "300",
+                    })
+                clips.append({**metadata, "storage_bucket": bucket_name, "object_path": object_path})
 
-        clips = analyze_clips(segments, duration)
-        if not clips:
-            raise RuntimeError("model returned no usable clips")
+            saved = supabase.table("clip_jobs").update({
+                "status": "completed", "clips": clips,
+                "transcript_source": transcript_source, "error_message": None,
+                "processing_started_at": None,
+            }).eq("id", job_id).eq("user_id", owner).eq("status", "processing").eq("attempts", attempt).execute()
 
-        supabase.table("clip_jobs").update({
-            "status": "completed",
-            "clips": clips,
-            "transcript_source": result["source"],
-            "error_message": None,
-        }).eq("id", job_id).execute()
+        # A reaper/reclaim can invalidate this attempt while analysis is running.
+        # Never let its late result overwrite a newer attempt's state or clips.
+        if not saved.data:
+            print(f"[job {job_id}] attempt {attempt} no longer owns the job; result discarded")
+            cleanup_attempt(supabase, job, bucket_name, uploaded)
+            return None
 
         print(f"[job {job_id}] completed: {len(clips)} clips in {time.monotonic() - started:.0f}s")
         return clips
 
     except Exception as exc:  # noqa: BLE001 - a failure fails the job, not the run
         message = str(exc)[:2000]
+        for name in ("SUPABASE_SERVICE_ROLE_KEY", "OPENAI_API_KEY", "LLM_API_KEY", "AGENTROUTER_API_KEY"):
+            secret = os.environ.get(name)
+            if secret:
+                message = message.replace(secret, "[redacted]")
         print(f"[job {job_id}] FAILED: {message}")
         try:
-            supabase.table("clip_jobs").update({
+            saved = supabase.table("clip_jobs").update({
                 "status": "failed",
                 "error_message": message,
-            }).eq("id", job_id).execute()
+                "clips": [], "processing_started_at": None,
+            }).eq("id", job_id).eq("user_id", owner).eq("status", "processing").eq("attempts", attempt).execute()
+            if not saved.data:
+                print(f"[job {job_id}] attempt {attempt} no longer owns the job; failure discarded")
         except Exception as update_exc:  # noqa: BLE001
             print(f"[job {job_id}] could not record failure: {update_exc}")
+        cleanup_attempt(supabase, job, bucket_name, uploaded)
         return None
+
+
+def build_video(url: str, workdir: Path, openai_client: Any = None):
+    source = media.download_source(url, workdir / "source.video")
+    _, _, duration = media.probe(source)
+    if duration > media.MAX_SOURCE_SECONDS:
+        raise ValueError("Source video exceeds the 30 minute limit")
+    if any(os.environ.get(name) for name in ("LLM_API_KEY", "AGENTROUTER_API_KEY", "LLM_BASE_URL")):
+        result = transcript_mod.get_transcript(url, openai_client=openai_client,
+                                               workdir=str(workdir), source_path=str(source))
+        suggestions = analyze_clips(result["segments"], duration)
+        for clip in suggestions:
+            clip["selection_source"] = "ai"
+        transcript_source = result["source"]
+    else:
+        suggestions = media.preview_timestamps(duration)
+        transcript_source = "preview"
+    return media.render_clips(source, suggestions, workdir), transcript_source
+
+
+def cleanup_attempt(supabase: Any, job: dict, bucket: str, paths: list[str]):
+    if not paths:
+        return
+    try:
+        # A commit can succeed while its response is lost. Retain referenced
+        # objects; if the database is unavailable, defer cleanup rather than
+        # deleting clips that may already be visible to the user.
+        result = supabase.table("clip_jobs").select("clips").eq("id", job["id"]).execute()
+        referenced = {clip.get("object_path") for row in (result.data or [])
+                      for clip in (row.get("clips") or []) if isinstance(clip, dict)}
+        unused = [path for path in paths if path not in referenced]
+        if unused:
+            supabase.storage.from_(bucket).remove(unused)
+    except Exception:
+        print(f"[job {job['id']}] storage cleanup deferred; inspect attempt-{job['attempts']} objects")
 
 
 def run_queue(
@@ -827,7 +891,7 @@ def run_queue(
     processed = 0
 
     while processed < max_jobs:
-        if time.monotonic() >= deadline:
+        if time.monotonic() + media.JOB_BUDGET_SECONDS >= deadline:
             print(
                 f"[queue] time budget of {budget_seconds / 60:.0f} min reached; "
                 f"stopping cleanly after {processed} job(s)"
@@ -916,6 +980,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="ToolStack Clipper worker (Supabase queue, or a local dry run).",
     )
     parser.add_argument("--url", help="Dry-run one URL locally; no Supabase needed.")
+    parser.add_argument("--render-dir", help="With --url: download and render actual MP4s here without Supabase.")
     parser.add_argument("--json", action="store_true", help="With --url: print JSON.")
     parser.add_argument(
         "--transcript-only", action="store_true",
@@ -939,6 +1004,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     openai_client = make_openai_client_or_none()
 
     if args.url:
+        if args.render_dir:
+            output = Path(args.render_dir).resolve()
+            output.mkdir(parents=True, exist_ok=True)
+            with media.job_deadline(), tempfile.TemporaryDirectory(prefix="clipper-local-") as directory:
+                rendered, source = build_video(args.url, Path(directory), openai_client)
+                import shutil
+                clips = []
+                for path, metadata in rendered:
+                    shutil.copy2(path, output / path.name)
+                    clips.append({**metadata, "file": path.name})
+                (output / "clips.json").write_text(json.dumps({"source": source, "clips": clips}, indent=2))
+            print(f"Rendered {len(clips)} MP4 clips in {output}")
+            return 0
         if not openai_client and transcript_mod.youtube_video_id(args.url) is None:
             print(
                 "[!] OPENAI_API_KEY is not set and this is not a YouTube URL, so the "

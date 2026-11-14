@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -47,3 +47,64 @@ __pycache__/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local credentials (the empty .env.example template remains tracked)
+.aws/
+.credentials/
+credentials*.json
+service-account*.json
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.pgpass
+.netrc
+
+# Local source videos, rendered clips, and integration proof output
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.avi
+*.m4v
+*.video
+/videos/
+/clips/
+/clipper-output/
+/clipper-mvp-proof-*/
+clips.json
+
+# Local backups and database dumps; keep migration/verification SQL sources
+backups/
+backup/
+dumps/
+backup*.sql
+dump*.sql
+*_backup.sql
+*_dump.sql
+*.dump
+*.backup
+*.bak
+*.sql.gz
+*.sql.gpg
+*.dump.gpg
+*.backup.gpg
+*.gpg
+*.sql.enc
+*.tar
+*.tar.gz
+*.tgz
+
+# Temporary test/runtime files
+/tmp/
+/temp/
+*.tmp
+*.temp
+*.log
+*.swp
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+/dist/

@@ -12,7 +12,7 @@ import { NextResponse } from 'next/server';
 export async function GET(request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get('code');
-  const next = requestUrl.searchParams.get('next') ?? '/dashboard';
+  const next = requestUrl.searchParams.get('next') || '/dashboard';
 
   if (!code) {
     return NextResponse.redirect(
@@ -29,9 +29,16 @@ export async function GET(request) {
     return NextResponse.redirect(url);
   }
 
-  // Only allow same-site relative redirects, so `next` cannot be used as an
-  // open-redirect to an attacker-controlled host.
-  const safeNext =
-    next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard';
-  return NextResponse.redirect(new URL(safeNext, request.url));
+  // Validate the parsed origin: URL parsing can normalize backslashes and
+  // whitespace into an external destination even when `next` starts with '/'.
+  let redirectUrl = new URL('/dashboard', requestUrl);
+  try {
+    const nextUrl = new URL(next, requestUrl);
+    if (nextUrl.origin === requestUrl.origin) {
+      redirectUrl = nextUrl;
+    }
+  } catch {
+    // Malformed destinations use the default dashboard redirect.
+  }
+  return NextResponse.redirect(redirectUrl);
 }

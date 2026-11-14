@@ -1,26 +1,43 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { createClient } from '@/utils/supabase/server';
+import { dispatchWorker } from '@/lib/worker-dispatch';
 
 export async function POST(request) {
   try {
-    const { videoUrl, userId } = await request.json();
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-    if (!videoUrl || typeof videoUrl !== 'string' || !videoUrl.match(/^https?:\/\/.+/i)) {
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON request' }, { status: 400 });
+    }
+    const videoUrl = body?.videoUrl;
+
+    let parsed;
+    try {
+      parsed = typeof videoUrl === 'string' && new URL(videoUrl.trim());
+    } catch { /* handled below */ }
+    if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || videoUrl.length > 4096) {
       return NextResponse.json(
         { error: 'Please provide a valid video URL (e.g. https://...)' },
         { status: 400 }
       );
     }
 
-    // Insert new job record into Supabase clip_jobs table
+    // Ownership comes from the verified cookie session. Only these two columns
+    // are insertable by authenticated; queue state uses database defaults.
     const { data, error } = await supabase
       .from('clip_jobs')
       .insert([
         {
-          user_id: userId || null,
+          user_id: user.id,
           video_url: videoUrl.trim(),
-          status: 'pending',
-          clips: [],
         },
       ])
       .select()
@@ -34,12 +51,14 @@ export async function POST(request) {
       );
     }
 
+    const workerDispatch = await dispatchWorker();
     return NextResponse.json({
       success: true,
       message: 'Video job queued successfully',
       job: data,
+      workerDispatch,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: 'Server error processing request' },
       { status: 500 }
