@@ -80,6 +80,21 @@ Local release verification passed with Node 22.x: lint, TypeScript, 18 API tests
 21 worker tests, both real MP4 integration workflows, and the production build.
 The integration runs used local fixtures, not production credentials.
 
+Release `84805a49188a897f89adef5a74e8733da2f7c0ab` was subsequently pushed to
+`main`. [Hosted validation](https://github.com/Blessingautomates/ai-clipper-ui/actions/runs/44475633312)
+passed and [Vercel deployment](https://vercel.com/toolstack1/ai-clipper-ui/FJwS8jKWuz1naYfepm66otMv7jYj)
+completed. The production domain now serves the new home page, and anonymous
+POST requests to `/api/uploads` and `/api/webhook` return HTTP 401. This confirms
+the application release is live; it does not confirm authenticated uploads or
+worker processing.
+
+The manual `production-config.yml` workflow uses existing worker secrets inside
+the GitHub runner to check the expected Supabase project, server key role, and
+existing bucket privacy, MP4 support, and upload limit. It reports only booleans,
+HTTP statuses, and the numeric upload limit, with no queue or database calls.
+Optional AI credential presence is reported separately and does not establish
+provider availability. It does not inspect Vercel variables or Auth redirects.
+
 ## Publish and accept the release
 
 1. Run `npm run lint`, `npm run typecheck`, `npm run test:mvp`,
