@@ -1,6 +1,7 @@
 """Offline worker/database contract tests. No Supabase or LLM client is created."""
 import contextlib
 import io
+import os
 import unittest
 import tempfile
 from pathlib import Path
@@ -181,6 +182,24 @@ class WorkerQueueTests(unittest.TestCase):
             worker.claim_job(queue)
         with self.assertRaises(RuntimeError):
             worker.reap_stale_jobs(queue)
+
+    def test_private_source_is_signed_at_claim_time_and_other_owners_are_rejected(self):
+        owner = FakeQueue().row['user_id']
+        path = owner + '/sources/11111111-1111-4111-8111-111111111111.mp4'
+        storage = SimpleNamespace(create_signed_url=lambda p, seconds: {
+            'signedURL': 'https://storage.example/fresh?token=private'
+        } if p == path and seconds == 600 else {})
+        queue = SimpleNamespace(storage=SimpleNamespace(from_=lambda bucket: storage))
+        base = 'https://storage.example/storage/v1/object/clips/'
+        with patch.dict(os.environ, {'SUPABASE_URL': 'https://storage.example'}):
+            self.assertEqual(worker.resolve_source_url(queue, base + path, owner, 'clips'),
+                             'https://storage.example/fresh?token=private')
+            for url in [base + path.replace(owner, 'another-owner'), base + path + '?token=stale',
+                        base + path.replace('/sources/', '/sources/../')]:
+                with self.assertRaises(ValueError):
+                    worker.resolve_source_url(queue, url, owner, 'clips')
+            self.assertEqual(worker.resolve_source_url(queue, 'https://example.com/video.mp4', owner, 'clips'),
+                             'https://example.com/video.mp4')
 
 
 if __name__ == "__main__":

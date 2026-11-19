@@ -41,7 +41,7 @@ jobs:
         run: npm run lint
 
       - name: Check TypeScript
-        run: node node_modules/typescript/bin/tsc --noEmit --incremental false
+        run: npm run typecheck
 
       - name: Test API ownership and callback security
         run: npm run test:api

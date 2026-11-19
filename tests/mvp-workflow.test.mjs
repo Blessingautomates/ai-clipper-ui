@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -12,11 +12,13 @@ import { createClient } from '@supabase/supabase-js';
 const require = createRequire(import.meta.url);
 const { NextResponse } = require('next/server');
 
-async function loadRoute(file, client) {
-  const context = vm.createContext({ URL, console, process: { env: {} } });
+async function loadRoute(file, client, env = {}) {
+  const context = vm.createContext({ URL, console, process: { env } });
   const routeModule = new vm.SourceTextModule(await readFile(new URL(file, import.meta.url), 'utf8'), { context });
   await routeModule.link((specifier) => {
-    const exports = specifier === 'next/server' ? { NextResponse }
+    const exports = specifier === 'node:crypto' ? { randomUUID }
+      : specifier === '@supabase/supabase-js' ? { createClient }
+      : specifier === 'next/server' ? { NextResponse }
       : specifier === '@/lib/worker-dispatch' ? { dispatchWorker: async () => 'unconfigured' }
         : { createClient: async () => client };
     return new vm.SyntheticModule(Object.keys(exports), function () {
@@ -27,7 +29,8 @@ async function loadRoute(file, client) {
   return routeModule.namespace;
 }
 
-test('owned URL → authenticated API → queue RPC → real MP4 upload → signed playback/download', { timeout: 120000 }, async (t) => {
+for (const sourceMode of ['url', 'upload']) {
+test(`owned ${sourceMode} → authenticated API → queue RPC → real MP4 upload → signed playback/download`, { timeout: 120000 }, async (t) => {
   const child = spawn(process.env.CLIPPER_TEST_PYTHON || 'python3', ['tests/fixtures/mvp_backend.py'], {
     env: { PATH: process.env.PATH, PYTHONUNBUFFERED: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -46,10 +49,25 @@ test('owned URL → authenticated API → queue RPC → real MP4 upload → sign
       auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${token}` } },
     });
     const owner = client('owner-token');
-    const { POST } = await loadRoute('../app/api/generate/route.js', owner);
+    const env = { NEXT_PUBLIC_SUPABASE_URL: fixture.url, SUPABASE_SERVICE_ROLE_KEY: 'fixture-service-key' };
+    let body = { videoUrl: fixture.url + '/owned.mp4', userId: 'forged-owner', status: 'completed' };
+    if (sourceMode === 'upload') {
+      const video = await (await fetch(fixture.url + '/owned.mp4')).blob();
+      const uploads = await loadRoute('../app/api/uploads/route.js', owner, env);
+      const preparedResponse = await uploads.POST(new Request('http://app.test/api/uploads', {
+        method: 'POST', body: JSON.stringify({ size: video.size, contentType: 'video/mp4' }),
+      }));
+      assert.equal(preparedResponse.status, 200, JSON.stringify(await preparedResponse.clone().json()));
+      const prepared = await preparedResponse.json();
+      const result = await owner.storage.from(prepared.bucket)
+        .uploadToSignedUrl(prepared.path, prepared.token, video, { contentType: 'video/mp4' });
+      assert.equal(result.error, null, JSON.stringify(result.error));
+      body = { uploadPath: prepared.path, userId: 'forged-owner', status: 'completed' };
+    }
+    const { POST } = await loadRoute('../app/api/generate/route.js', owner, env);
     const generated = await POST(new Request('http://app.test/api/generate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrl: fixture.url + '/owned.mp4', userId: 'forged-owner', status: 'completed' }),
+      body: JSON.stringify(body),
     }));
     assert.equal(generated.status, 200, JSON.stringify(await generated.clone().json()));
     const { job } = await generated.json();
@@ -107,3 +125,4 @@ test('owned URL → authenticated API → queue RPC → real MP4 upload → sign
     if (child.exitCode === null) child.kill('SIGTERM');
   }
 });
+}

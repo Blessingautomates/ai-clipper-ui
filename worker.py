@@ -33,6 +33,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 from uuid import UUID
+from urllib.parse import urlsplit
 
 import media
 
@@ -792,7 +793,8 @@ def process_video_job(supabase: Any, job: dict, openai_client: Any = None) -> li
             is_public = bucket.get("public") if isinstance(bucket, dict) else getattr(bucket, "public", None)
             if is_public is not False:
                 raise RuntimeError("Clip storage bucket is missing or is not private")
-            rendered, transcript_source = build_video(url, Path(directory), openai_client)
+            source_url = resolve_source_url(supabase, url, owner, bucket_name)
+            rendered, transcript_source = build_video(source_url, Path(directory), openai_client)
             clips = []
             for path, metadata in rendered:
                 object_path = f"{owner}/{job_id}/attempt-{attempt}/clip-{metadata['clip_number']}.mp4"
@@ -839,6 +841,27 @@ def process_video_job(supabase: Any, job: dict, openai_client: Any = None) -> li
             print(f"[job {job_id}] could not record failure: {update_exc}")
         cleanup_attempt(supabase, job, bucket_name, uploaded)
         return None
+
+
+def resolve_source_url(supabase: Any, url: str, owner: str, bucket: str) -> str:
+    """Refresh private source access at claim time, after verifying ownership."""
+    base = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    parsed, configured = urlsplit(url), urlsplit(base)
+    storage_prefix = configured.path + "/storage/v1/object/"
+    if not base or (parsed.scheme, parsed.netloc) != (configured.scheme, configured.netloc) \
+            or not parsed.path.startswith(storage_prefix):
+        return url
+    prefix = storage_prefix + bucket + "/" + owner + "/sources/"
+    if parsed.query or parsed.fragment or not parsed.path.startswith(prefix) \
+            or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.mp4",
+                                parsed.path[len(prefix):], re.IGNORECASE):
+        raise ValueError("Uploaded video does not belong to this job owner")
+    path = parsed.path[len(storage_prefix + bucket + "/"):]
+    result = supabase.storage.from_(bucket).create_signed_url(path, 600)
+    signed = result.get("signedURL") or result.get("signedUrl")
+    if not signed:
+        raise RuntimeError("Unable to access uploaded video")
+    return signed
 
 
 def build_video(url: str, workdir: Path, openai_client: Any = None):

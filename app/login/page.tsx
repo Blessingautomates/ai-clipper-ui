@@ -1,10 +1,14 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 
 export default function LoginPage() {
+  return <Suspense fallback={<p className="p-8 text-slate-400">Loading sign-in…</p>}><LoginForm /></Suspense>;
+}
+
+function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -12,30 +16,43 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [dismissCallbackError, setDismissCallbackError] = useState(false);
 
   const router = useRouter();
+  const callbackError = useSearchParams().get('error');
+  const visibleError = error || (!dismissCallbackError && (callbackError === 'missing_code'
+    ? 'Sign-in link is missing or expired. Please sign in again.' : callbackError?.slice(0, 300)));
 
   const handleGoogleLogin = async () => {
-    const supabase = createClient();
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
+    setLoading(true);
+    setDismissCallbackError(true);
+    setError(null);
+    try {
+      const { error } = await createClient().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) throw error;
+    } catch (err) {
+      setError((err instanceof Error && err.message) || 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setDismissCallbackError(true);
     setError(null);
     setMessage(null);
 
-    const supabase = createClient();
-
     try {
+      const supabase = createClient();
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
           options: {
@@ -43,7 +60,12 @@ export default function LoginPage() {
           },
         });
         if (error) throw error;
-        setMessage('Confirmation email sent! Please check your inbox.');
+        if (data.session) {
+          router.push('/dashboard');
+          router.refresh();
+        } else {
+          setMessage('Confirmation email sent! Please check your inbox.');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -72,9 +94,9 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {error && (
+        {visibleError && (
           <div className="p-3 text-sm text-red-400 bg-red-950/50 border border-red-800 rounded-lg">
-            {error}
+            {visibleError}
           </div>
         )}
 
@@ -86,6 +108,7 @@ export default function LoginPage() {
 
         <button
           onClick={handleGoogleLogin}
+          disabled={loading}
           type="button"
           className="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white text-gray-900 font-medium rounded-lg hover:bg-gray-100 transition-colors"
         >
@@ -180,6 +203,7 @@ export default function LoginPage() {
             onClick={() => {
               setIsSignUp(!isSignUp);
               setError(null);
+              setDismissCallbackError(true);
               setMessage(null);
             }}
             className="text-sm text-indigo-400 hover:text-indigo-300"

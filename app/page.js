@@ -9,11 +9,11 @@ export default function HomePage() {
       </div>
 
       <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl max-w-xl">
-        Turn Long YouTube Videos Into Viral Shorts
+        Turn Your Videos Into Short Clips
       </h1>
 
       <p className="text-slate-400 max-w-md text-sm">
-        Extract, auto-caption, and format high-converting short clips in seconds.
+        Upload an MP4 or paste a direct video link. Generate, preview, and download up to three clips.
       </p>
 
       <div className="flex items-center gap-4">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Download, Scissors, Sparkles } from 'lucide-react';
+import { createClient } from '@/utils/supabase/client';
 
 async function readResponse(response) {
   const data = await response.json();
@@ -64,6 +65,10 @@ function ClipCard({ jobId, clip }) {
 
 export default function Dashboard() {
   const [videoUrl, setVideoUrl] = useState('');
+  const [inputMode, setInputMode] = useState('url');
+  const [videoFile, setVideoFile] = useState(null);
+  const uploaded = useRef(null);
+  const fileInput = useRef(null);
   const [submitting, setSubmitting] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [error, setError] = useState('');
@@ -102,15 +107,37 @@ export default function Dashboard() {
     setError('');
     setNotice('');
     try {
+      let body = { videoUrl: videoUrl.trim() };
+      if (inputMode === 'upload') {
+        if (!videoFile || videoFile.size <= 0 || videoFile.size > 100 * 1024 * 1024
+          || !videoFile.name.toLowerCase().endsWith('.mp4')) throw new Error('Choose an MP4 up to 100 MB.');
+        if (!uploaded.current || uploaded.current.file !== videoFile) {
+          setNotice('Uploading video…');
+          const prepared = await readResponse(await fetch('/api/uploads', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contentType: 'video/mp4', size: videoFile.size }),
+          }));
+          const { error: uploadError } = await createClient().storage.from(prepared.bucket)
+            .uploadToSignedUrl(prepared.path, prepared.token, videoFile.slice(0, videoFile.size, 'video/mp4'), { contentType: 'video/mp4' });
+          if (uploadError) throw new Error('Video upload failed. Please try again.');
+          uploaded.current = { file: videoFile, path: prepared.path };
+        }
+        body = { uploadPath: uploaded.current.path };
+        setNotice('Video uploaded. Queueing clips…');
+      }
       const data = await readResponse(await fetch('/api/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoUrl: videoUrl.trim() }),
+        body: JSON.stringify(body),
       }));
       setJobs((previous) => [data.job, ...previous.filter((job) => job.id !== data.job.id)]);
       setVideoUrl('');
+      setVideoFile(null);
+      uploaded.current = null;
+      if (fileInput.current) fileInput.current.value = '';
       setNotice(data.workerDispatch === 'dispatched' ? 'Job queued. Processing will start when a worker is available.'
         : 'Job saved. Waiting for the processing worker to pick it up.');
     } catch (err) {
+      setNotice('');
       setError(err.message);
     } finally {
       setSubmitting(false);
@@ -125,11 +152,22 @@ export default function Dashboard() {
           <Link href="/login" className="text-sm text-blue-400">Account</Link>
         </div>
         <form onSubmit={handleGenerate} className="rounded-2xl border border-slate-800 bg-[#0F131C] p-6 space-y-4">
-          <label htmlFor="video-url" className="block font-semibold">Public video URL</label>
-          <p className="text-sm text-slate-400">Paste a direct video file link you have permission to process. Up to 256 MB and 30 minutes. We’ll render up to three MP4 clips.</p>
-          <input id="video-url" type="url" required maxLength={4096} value={videoUrl}
+          <div className="flex gap-4">
+            <label><input type="radio" name="source" checked={inputMode === 'url'} disabled={submitting} onChange={() => setInputMode('url')} /> Video URL</label>
+            <label><input type="radio" name="source" checked={inputMode === 'upload'} disabled={submitting} onChange={() => setInputMode('upload')} /> Upload MP4</label>
+          </div>
+          <p className="text-sm text-slate-400">Use a video you have permission to process, up to 30 minutes. We’ll render up to three MP4 clips. YouTube pages are not supported.</p>
+          {inputMode === 'url' ? <>
+          <label htmlFor="video-url" className="block font-semibold">Direct video file URL (up to 256 MB)</label>
+          <input id="video-url" type="url" required disabled={submitting} maxLength={4096} value={videoUrl}
             onChange={(event) => setVideoUrl(event.target.value)} placeholder="https://example.com/video.mp4"
             className="w-full rounded-xl border border-slate-700 bg-[#161B26] px-4 py-3" />
+          </> : <>
+            <label htmlFor="video-file" className="block font-semibold">MP4 file (up to 100 MB, subject to storage limits)</label>
+            <input ref={fileInput} id="video-file" type="file" required accept="video/mp4,.mp4" disabled={submitting}
+              onChange={(event) => { setVideoFile(event.target.files?.[0] || null); uploaded.current = null; }}
+              className="w-full rounded-xl border border-slate-700 bg-[#161B26] px-4 py-3" />
+          </>}
           <button type="submit" disabled={submitting} className="flex items-center gap-2 rounded-xl bg-blue-600 px-6 py-3 disabled:opacity-50">
             <Sparkles size={16} /> {submitting ? 'Queueing…' : 'Generate clips'}
           </button>
@@ -142,7 +180,7 @@ export default function Dashboard() {
           {!loading && !jobs.length && <p className="text-slate-400">Submit a video to create your first clips.</p>}
           {jobs.map((job) => (
             <section key={job.id} className="space-y-3 rounded-2xl border border-slate-800 p-4">
-              <p className="truncate text-sm text-slate-300">{job.video_url}</p>
+              <p className="truncate text-sm text-slate-300">{job.video_url.includes('/storage/v1/object/') ? 'Uploaded video' : job.video_url}</p>
               <p role="status" className="text-sm text-blue-400">{({ pending: 'Queued', processing: 'Processing video…', completed: 'Clips ready', failed: 'Processing failed' })[job.status] || job.status}</p>
               {job.status === 'failed' && <p className="text-sm text-red-400">{job.error_message || 'Unable to process this video. Check the URL and try again.'}</p>}
               {job.status === 'completed' && <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

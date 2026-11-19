@@ -17,7 +17,23 @@ export async function POST(request) {
     } catch {
       return NextResponse.json({ error: 'Invalid JSON request' }, { status: 400 });
     }
-    const videoUrl = body?.videoUrl;
+    let videoUrl = body?.videoUrl;
+    if (body?.uploadPath !== undefined) {
+      const path = body.uploadPath;
+      const prefix = `${user.id}/sources/`;
+      if (typeof path !== 'string' || !path.startsWith(prefix)
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.mp4$/i.test(path.slice(prefix.length))) {
+        return NextResponse.json({ error: 'Invalid uploaded video.' }, { status: 400 });
+      }
+      const bucket = process.env.CLIPS_STORAGE_BUCKET || 'clips';
+      const { data: info, error: infoError } = await supabase.storage.from(bucket).info(path);
+      if (infoError || !info || info.contentType !== 'video/mp4'
+        || !Number.isSafeInteger(info.size) || info.size <= 0 || info.size > 100 * 1024 * 1024) {
+        return NextResponse.json({ error: 'Uploaded video is missing or invalid. Please upload it again.' }, { status: 400 });
+      }
+      // Persist a stable reference; the worker signs it when it claims the job.
+      videoUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL.replace(/\/$/, '')}/storage/v1/object/${bucket}/${path}`;
+    }
 
     let parsed;
     try {

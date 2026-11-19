@@ -7,11 +7,13 @@ import contextlib
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
+import json
 import os
 from pathlib import Path
 import subprocess
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -128,6 +130,43 @@ class MediaTests(unittest.TestCase):
         self.assertEqual(queue.row['status'], 'failed')
         self.assertEqual(queue.row['clips'], [])
         self.assertTrue(all(not path.exists() for path in scratch))
+
+    def test_transcription_and_ai_selection_render_real_timed_clips(self):
+        transcribed = []
+        prompts = []
+        def transcribe(**request):
+            contents = request['file'].read()
+            self.assertGreater(len(contents), 0)
+            self.assertLess(len(contents), worker.transcript_mod.WHISPER_MAX_BYTES)
+            self.assertEqual(request['response_format'], 'verbose_json')
+            transcribed.append(True)
+            return {'segments': [
+                {'start': 0, 'end': 6, 'text': 'The surprising opening hook'},
+                {'start': 6, 'end': 12, 'text': 'The practical next step'},
+                {'start': 12, 'end': 18, 'text': 'A useful final lesson'},
+            ]}
+        def analyze(**request):
+            prompts.append(request['messages'][1]['content'])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({'clips': [
+                {'title': 'Opening', 'start_time': 0, 'end_time': 6, 'hook_sentence': 'The surprising opening hook', 'virality_score': 80},
+                {'title': 'Next step', 'start_time': 6, 'end_time': 12, 'hook_sentence': 'The practical next step', 'virality_score': 75},
+            ]})))])
+        whisper = SimpleNamespace(audio=SimpleNamespace(transcriptions=SimpleNamespace(create=transcribe)))
+        llm = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=analyze)))
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.dict(os.environ, {'LLM_API_KEY': 'fixture-only', 'LLM_BASE_URL': 'https://fixture.invalid'}), \
+             patch.object(media, 'public_target', side_effect=self.fixture_target), \
+             patch.object(worker, 'make_llm_client', return_value=llm), \
+             patch.object(worker.transcript_mod, '_download_audio', side_effect=AssertionError('Must use downloaded source')), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rendered, source = worker.build_video(self.url, Path(directory), whisper)
+            self.assertEqual(source, 'whisper')
+            self.assertEqual(len(rendered), 2)
+            self.assertTrue(transcribed)
+            self.assertIn('[00:00:00.000 -> 00:00:18.000]', prompts[0])
+            for path, clip in rendered:
+                self.assertEqual(clip['selection_source'], 'ai')
+                self.assertEqual(media.validate_mp4(path, 6)['width'], 320)
 
     def test_private_targets_and_credentials_rejected(self):
         for url in ('http://127.0.0.1/video', 'http://[::1]/video', 'http://169.254.169.254/video',

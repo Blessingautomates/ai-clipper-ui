@@ -86,6 +86,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.handle_api()
 
+    def do_PUT(self):
+        self.handle_api()
+
     def do_PATCH(self):
         self.handle_api()
 
@@ -154,12 +157,47 @@ class Handler(BaseHTTPRequestHandler):
                                        'created_at': '2026-11-11T00:00:00Z', 'updated_at': '2026-11-11T00:00:00Z'})
         sign_prefix = '/storage/v1/object/sign/clips/'
         object_prefix = '/storage/v1/object/clips/'
+        info_prefix = '/storage/v1/object/info/clips/'
+        upload_prefix = '/storage/v1/object/upload/sign/clips/'
+        if path.startswith(info_prefix):
+            object_path = path[len(info_prefix):]
+            if not owner or not object_path.startswith(owner + '/'):
+                return self.response(403, {'message': 'Owner only'})
+            destination = root / 'objects' / object_path
+            if not destination.is_file():
+                return self.response(404, {'message': 'Missing object'})
+            return self.response(200, {'name': object_path, 'size': destination.stat().st_size,
+                                       'content_type': 'video/mp4'})
+        if path.startswith(upload_prefix):
+            object_path = path[len(upload_prefix):]
+            if self.command == 'POST' and token == SERVICE:
+                expires = int(time.time()) + 7200
+                return self.response(200, {'url': f'/object/upload/sign/clips/{object_path}?token={token_for(object_path, expires)}'})
+            signed = params.get('token', [''])[0]
+            try:
+                expires = int(signed.split('.')[0])
+            except ValueError:
+                expires = 0
+            if self.command != 'PUT' or expires <= time.time() \
+                    or not hmac.compare_digest(signed, token_for(object_path, expires)):
+                return self.response(403, {'message': 'Invalid upload authorization'})
+            destination = root / 'objects' / object_path
+            if destination.exists():
+                return self.response(409, {'message': 'Object already exists'})
+            message = BytesParser(policy=email_policy).parsebytes(
+                ('Content-Type: ' + self.headers['Content-Type'] + '\r\nMIME-Version: 1.0\r\n\r\n').encode() + body)
+            uploaded = next(part for part in message.iter_parts() if part.get_filename())
+            if uploaded.get_content_type() != 'video/mp4':
+                return self.response(400, {'message': 'MP4 content type required'})
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(uploaded.get_payload(decode=True))
+            return self.response(200, {'Key': 'clips/' + object_path})
         if path.startswith(sign_prefix):
             object_path = path[len(sign_prefix):]
             if self.command == 'POST':
-                if not owner or not object_path.startswith(owner + '/'):
+                if token != SERVICE and (not owner or not object_path.startswith(owner + '/')):
                     return self.response(403, {'message': 'Owner only'})
-                expires = int(time.time()) + json.loads(body)['expiresIn']
+                expires = int(time.time()) + int(json.loads(body)['expiresIn'])
                 return self.response(200, {'signedURL': f'/object/sign/clips/{object_path}?token={token_for(object_path, expires)}'})
             signed = params.get('token', [''])[0]
             try:
@@ -202,11 +240,11 @@ actual_public_target = media.public_target
 try:
     while requests.get() != 'stop':
         def fixture_target(url):
-            if url != base_url + '/owned.mp4':
+            if url != base_url + '/owned.mp4' and not url.startswith(base_url + '/storage/v1/object/sign/clips/' + OWNER + '/sources/'):
                 return actual_public_target(url)
             return urlsplit(url), '127.0.0.1', server.server_port
         with patch.dict(os.environ, {'LLM_API_KEY': '', 'AGENTROUTER_API_KEY': '', 'LLM_BASE_URL': '',
-                                     'CLIPS_STORAGE_BUCKET': 'clips'}), \
+                                     'CLIPS_STORAGE_BUCKET': 'clips', 'SUPABASE_URL': base_url}), \
              patch.object(media, 'public_target', side_effect=fixture_target), \
              contextlib.redirect_stdout(io.StringIO()):
             worker.run_queue(client, max_jobs=1, budget_seconds=1500)
